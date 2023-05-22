@@ -1,9 +1,9 @@
-pub fn flatten<I>(iter: I) -> Flatten<I>
+pub fn flatten<I>(iter: I) -> Flatten<I::IntoIter>
 where
-    I: Iterator,
+    I: IntoIterator,
     I::Item: IntoIterator,
 {
-    Flatten::new(iter)
+    Flatten::new(iter.into_iter())
 }
 
 pub struct Flatten<O>
@@ -54,6 +54,30 @@ where
     }
 }
 
+impl<O> DoubleEndedIterator for Flatten<O>
+where
+    O: DoubleEndedIterator,
+    O::Item: IntoIterator,
+    //when the inner item is turned into an iterator that iterator needs
+    //to implement doubleendediterator
+    <O::Item as IntoIterator>::IntoIter: DoubleEndedIterator,
+{
+    fn next_back(&mut self) -> Option<Self::Item> {
+        loop {
+            if let Some(ref mut inner_iter) = self.inner {
+                if let Some(i) = inner_iter.next_back() {
+                    return Some(i);
+                }
+                self.inner = None;
+            }
+
+            //Pick the next item from the outer things if there is one
+            let next_inner_iter = self.outer.next_back()?.into_iter();
+            self.inner = Some(next_inner_iter);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -71,13 +95,28 @@ mod tests {
     }
     #[test]
     fn two_vec() {
-        assert_eq!(flatten(vec![vec!["a"], vec!["b"]].into_iter()).count(), 2)
+        assert_eq!(flatten(vec![vec!["a"], vec!["b"]]).count(), 2)
     }
     #[test]
     fn empty_two_vec() {
+        assert_eq!(flatten(vec![Vec::<()>::new(), vec![]]).count(), 0)
+    }
+    #[test]
+    fn reverse_two() {
         assert_eq!(
-            flatten(vec![Vec::<()>::new(), vec![]].into_iter()).count(),
-            0
+            flatten(std::iter::once(vec!["a", "b"]))
+                .rev()
+                .collect::<Vec<_>>(),
+            vec!["b", "a"]
+        )
+    }
+    #[test]
+    fn reverse_two_vec() {
+        assert_eq!(
+            flatten(vec![vec!["a"], vec!["b"]])
+                .rev()
+                .collect::<Vec<_>>(),
+            vec!["b", "a"]
         )
     }
 }
