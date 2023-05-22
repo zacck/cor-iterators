@@ -13,7 +13,9 @@ where
 {
     outer: O,
     //Cast inner item into an iterator
-    inner: Option<<O::Item as IntoIterator>::IntoIter>,
+    //two inner iterators for implementing double endedness
+    next_iter: Option<<O::Item as IntoIterator>::IntoIter>,
+    back_iter: Option<<O::Item as IntoIterator>::IntoIter>,
 }
 
 impl<O> Flatten<O>
@@ -24,7 +26,8 @@ where
     fn new(iter: O) -> Self {
         Flatten {
             outer: iter,
-            inner: None,
+            next_iter: None,
+            back_iter: None,
         }
     }
 }
@@ -40,16 +43,24 @@ where
     fn next(&mut self) -> Option<Self::Item> {
         // if there is an inner iterator and it is yeilding
         loop {
-            if let Some(ref mut inner_iter) = self.inner {
+            if let Some(ref mut inner_iter) = self.next_iter {
                 if let Some(i) = inner_iter.next() {
                     return Some(i);
                 }
-                self.inner = None;
+                self.next_iter = None;
             }
 
             //Pick the next item from the outer things if there is one
-            let next_inner_iter = self.outer.next()?.into_iter();
-            self.inner = Some(next_inner_iter);
+            //consider the case that we have arrived at the outer iterator
+            //that was consumed by next_back and we now need to walk it forward
+            if let Some(next_inner) = self.outer.next() {
+                //walking forward and the forward iterator gives us another element
+                self.next_iter = Some(next_inner.into_iter());
+            } else {
+                //use ? to return None if that's what we get from
+                // the back back iter if we dont return what is there and start walking it
+                return self.back_iter.as_mut()?.next();
+            }
         }
     }
 }
@@ -64,16 +75,24 @@ where
 {
     fn next_back(&mut self) -> Option<Self::Item> {
         loop {
-            if let Some(ref mut inner_iter) = self.inner {
-                if let Some(i) = inner_iter.next_back() {
+            if let Some(ref mut back_iter) = self.back_iter {
+                if let Some(i) = back_iter.next_back() {
                     return Some(i);
                 }
-                self.inner = None;
+                self.back_iter = None;
             }
 
-            //Pick the next item from the outer things if there is one
-            let next_inner_iter = self.outer.next_back()?.into_iter();
-            self.inner = Some(next_inner_iter);
+            //Pick the next back item from the outer things if there is one
+            //consider the case that we have arrived at the outer iterator
+            //that was consumed by next and we now need to walk it backward
+            if let Some(next_back_inner) = self.outer.next_back() {
+                //walking backward and the backward  iterator gives us another element
+                self.back_iter = Some(next_back_inner.into_iter());
+            } else {
+                //use ? to return None if that's what we get from
+                // the  next iter if we dont return what is there and start walking it
+                return self.next_iter.as_mut()?.next_back();
+            }
         }
     }
 }
@@ -118,5 +137,15 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["b", "a"]
         )
+    }
+    #[test]
+    fn both_ends() {
+        let mut iter = flatten(vec![vec!["a", "b"], vec!["c", "d"]]);
+        assert_eq!(iter.next(), Some("a"));
+        assert_eq!(iter.next_back(), Some("d"));
+        assert_eq!(iter.next(), Some("b"));
+        assert_eq!(iter.next_back(), Some("c"));
+        assert_eq!(iter.next(), None);
+        assert_eq!(iter.next_back(), None);
     }
 }
